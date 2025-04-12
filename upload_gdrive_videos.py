@@ -123,7 +123,7 @@ def get_youtube_credentials(channel_id=None, channel_name=None):
     CHANNEL_DRIVE_LINKS = {
         "kidventure quest": "https://drive.google.com/file/d/1-v5o9of59XUCt35xaZmVDOxykY6BdM5H/view?usp=sharing",
         "magicmap tales": "https://drive.google.com/file/d/1av-x5XQ3JYb6b5kHTwqprgdO-MFMtr4U/view?usp=sharing",
-        "tinny tralarbazer": "https://drive.google.com/file/d/1hJ-bnM7nAlBQolgAwlOAKQK-p5ow2N9h/view?usp=sharing"
+        "tiny trailblazers": "https://drive.google.com/file/d/1hJ-bnM7nAlBQolgAwlOAKQK-p5ow2N9h/view?usp=sharing"
     }
     
     # Google Drive link for channel_mappings.json
