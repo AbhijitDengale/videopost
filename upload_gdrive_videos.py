@@ -730,7 +730,7 @@ def process_folder_for_upload(folder_data, row_index, channel_id=None, channel_n
             title=title,
             description=description,
             tags=tags,
-            privacy_status="unlisted",  # Default to unlisted
+            privacy_status="public",  # Default to unlisted
             credentials=credentials,
             channel_title=channel_title
         )

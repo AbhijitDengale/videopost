@@ -73,15 +73,60 @@ jobs:
             echo "Uploading ${COUNT} videos to channel: ${CHANNEL}"
             echo "==================================================="
             
+            # Initial variables to track channel limit status
+            CHANNEL_LIMIT_REACHED=false
+            UPLOAD_FAILURES=0
+            
             # Upload videos one at a time with 2-minute wait between each
             for (( i=1; i<=${COUNT}; i++ ))
             do
+              # Skip if channel limit already reached
+              if [ "$CHANNEL_LIMIT_REACHED" = true ]; then
+                echo "\n===================================================" 
+                echo "⚠️ Upload limit reached for channel: ${CHANNEL}"
+                echo "Skipping remaining videos for this channel and moving to next channel"
+                echo "===================================================\n"
+                break
+              fi
+            
               echo "\n===================================================" 
               echo "Uploading video ${i}/${COUNT} to channel: ${CHANNEL}"
               echo "===================================================\n" 
               
-              # Upload a single random video
-              python upload_gdrive_videos.py --channel-name "${CHANNEL}" --limit 1 --random
+              # Upload a single random video and capture the output
+              OUTPUT=$(python upload_gdrive_videos.py --channel-name "${CHANNEL}" --limit 1 --random 2>&1)
+              EXIT_CODE=$?
+              
+              # Check if upload limit error occurred - detect specific error message
+              if echo "$OUTPUT" | grep -q "uploadLimitExceeded"; then
+                echo "\n===================================================" 
+                echo "⚠️ YouTube upload limit exceeded for channel: ${CHANNEL}"
+                echo "Moving to next channel"
+                echo "===================================================\n"
+                CHANNEL_LIMIT_REACHED=true
+                break
+              fi
+              
+              # Check for other kinds of errors
+              if [ $EXIT_CODE -ne 0 ]; then
+                echo "\n===================================================" 
+                echo "⚠️ Upload failed with exit code: $EXIT_CODE"
+                echo "===================================================\n"
+                UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
+                
+                # If we have 3 consecutive failures, assume there's a problem with this channel
+                if [ $UPLOAD_FAILURES -ge 3 ]; then
+                  echo "\n===================================================" 
+                  echo "⚠️ Too many consecutive failures for channel: ${CHANNEL}"
+                  echo "Moving to next channel"
+                  echo "===================================================\n"
+                  CHANNEL_LIMIT_REACHED=true
+                  break
+                fi
+              else
+                # Reset failure counter on success
+                UPLOAD_FAILURES=0
+              fi
               
               # Print updated upload history after each video
               python upload_gdrive_videos.py --upload-history
