@@ -1,0 +1,123 @@
+name: Daily YouTube Upload
+
+on:
+  schedule:
+    # Monday, Tuesday, Wednesday: 2:30 PM – 5:00 PM (Pacific) = 9:30 PM UTC
+    - cron: '30 21 * * 1-3'
+    # Thursday, Friday: 12:00 PM – 2:30 PM (Pacific) = 7:00 PM UTC
+    - cron: '0 19 * * 4-5'
+    # Saturday, Sunday: 9:00 AM – 11:30 AM (Pacific) = 4:00 PM UTC
+    - cron: '0 16 * * 6-0'
+  workflow_dispatch:  # Allow manual trigger for testing
+
+jobs:
+  upload-videos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150  # Set maximum runtime to 2 hours and 30 minutes (150 minutes)
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_gdrive_integration.txt
+          
+      - name: Create temp directories
+        run: |
+          # Create necessary directories for temporary files
+          mkdir -p temp_download
+          
+      - name: Update Google Drive data
+        run: |
+          # First print the upload history to keep track of what's already uploaded
+          python upload_gdrive_videos.py --upload-history
+          
+          # Scan Google Drive for new videos
+          python gd/google_drive_sheet_integration.py
+          
+      - name: Generate random video counts for each channel
+        id: random_counts
+        run: |
+          # Hardcoded array of channel names from our mappings file
+          CHANNEL_NAMES=("MagicMap Tales" "KidVenture Quest" "Tiny Trailblazers")
+          
+          # For each channel, generate a random number between 7-10
+          COUNTS=""
+          for channel in "${CHANNEL_NAMES[@]}"; do
+            COUNT=$(shuf -i 7-10 -n 1)
+            COUNTS="${COUNTS}${channel}:${COUNT},"
+          done
+          COUNTS=${COUNTS%,}
+          
+          # Output the counts to use in next step
+          echo "channel_counts=${COUNTS}" >> $GITHUB_OUTPUT
+          echo "Generated random video counts: ${COUNTS}"
+          
+      - name: Upload videos to each YouTube channel
+        run: |
+          # Get the random counts for each channel
+          IFS=',' read -ra CHANNEL_COUNT_PAIRS <<< "${{ steps.random_counts.outputs.channel_counts }}"
+          
+          # Process each channel with its random count
+          for pair in "${CHANNEL_COUNT_PAIRS[@]}"; do
+            CHANNEL="${pair%%:*}"
+            COUNT="${pair##*:}"
+            
+            echo "==================================================="
+            echo "Uploading ${COUNT} videos to channel: ${CHANNEL}"
+            echo "==================================================="
+            
+            # Upload videos one at a time with 2-minute wait between each
+            for (( i=1; i<=${COUNT}; i++ ))
+            do
+              echo "\n===================================================" 
+              echo "Uploading video ${i}/${COUNT} to channel: ${CHANNEL}"
+              echo "===================================================\n" 
+              
+              # Upload a single random video
+              python upload_gdrive_videos.py --channel-name "${CHANNEL}" --limit 1 --random
+              
+              # Print updated upload history after each video
+              python upload_gdrive_videos.py --upload-history
+              
+              # Wait 2 minutes between video uploads (unless it's the last video of the last channel)
+              if [ ${i} -lt ${COUNT} ] || [ ! "$pair" = "${CHANNEL_COUNT_PAIRS[-1]}" ]; then
+                echo "\n===================================================" 
+                echo "Waiting 2 minutes before uploading next video..."
+                echo "===================================================\n" 
+                sleep 120
+              fi
+            done
+            
+            # Wait 30 seconds between channels
+            if [ ! "$pair" = "${CHANNEL_COUNT_PAIRS[-1]}" ]; then
+              echo "\n===================================================" 
+              echo "Finished with ${CHANNEL}. Moving to next channel..."
+              echo "===================================================\n" 
+              sleep 30
+            fi
+          done
+          
+      - name: Print final upload summary
+        run: |
+          echo "==================================================="
+          echo "Daily YouTube upload completed successfully!"
+          echo "==================================================="
+          python upload_gdrive_videos.py --upload-history
+      
+      - name: Cleanup temporary files
+        if: always()  # Run this step even if previous steps fail
+        run: |
+          echo "==================================================="
+          echo "Cleaning up all temporary files..."
+          echo "==================================================="
+          rm -rf temp_download/*
+          find . -name "*.temp.*" -type f -delete
+          find . -name "temp_*.json" -type f -delete
+          echo "Cleanup completed!"
