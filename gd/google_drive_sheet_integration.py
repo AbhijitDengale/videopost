@@ -262,7 +262,8 @@ def get_subfolder_details_with_files():
     return all_data
 
 def update_sheet_with_detailed_data(spreadsheet_id, folder_data):
-    """Update the spreadsheet with detailed subfolder and file information."""
+    """Update the spreadsheet with detailed subfolder and file information.
+    This version preserves existing data, especially upload history columns."""
     if not folder_data:
         print("No new data to update in the spreadsheet.")
         return None
@@ -270,11 +271,11 @@ def update_sheet_with_detailed_data(spreadsheet_id, folder_data):
     credentials = get_credentials()
     sheets_service = build('sheets', 'v4', credentials=credentials)
     
-    # Get existing data to append to it rather than replacing
+    # Get ALL existing data including Upload Status, Upload Date, and YouTube URL columns
     try:
         result = sheets_service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
-            range='Sheet1!A:H'  # Updated to match the new column structure
+            range='Sheet1'  # Get the entire sheet to preserve all columns
         ).execute()
         
         existing_values = result.get('values', [])
@@ -282,25 +283,57 @@ def update_sheet_with_detailed_data(spreadsheet_id, folder_data):
         # If sheet is empty, add a header row
         if not existing_values:
             existing_values = [['Folder ID', 'Subfolder Name', 'Parent Folder', 'Last Modified', 'File Count', 
-                              'File Names', 'File Types', 'File IDs']]
-        elif not existing_values[0] or len(existing_values[0]) < 5:
-            # If header row exists but doesn't match our expected format, fix it
-            existing_values[0] = ['Folder ID', 'Subfolder Name', 'Parent Folder', 'Last Modified', 'File Count', 
-                                 'File Names', 'File Types', 'File IDs']
+                              'File Names', 'File Types', 'File IDs', 'Upload Status', 'Upload Date', 'YouTube URL', 'YouTube Channel']]
+        
+        # Make sure header row is complete, but preserve any additional columns that might exist
+        if existing_values and len(existing_values) > 0:
+            header = existing_values[0]
+            # Ensure our basic columns exist while preserving any others
+            basic_columns = ['Folder ID', 'Subfolder Name', 'Parent Folder', 'Last Modified', 'File Count', 
+                            'File Names', 'File Types', 'File IDs']
+            
+            # Check if any basic columns are missing
+            for i, col in enumerate(basic_columns):
+                if i >= len(header) or header[i] != col:
+                    print(f"Fixing header: column {i} should be '{col}' but is '{header[i] if i < len(header) else 'missing'}'")
+                    # Ensure header is long enough
+                    while len(header) <= i:
+                        header.append('')
+                    header[i] = col
+            
+            existing_values[0] = header
         
         print(f"Found {len(existing_values)-1} existing rows in the spreadsheet")
+        if existing_values and len(existing_values) > 0:
+            print(f"Header has {len(existing_values[0])} columns: {existing_values[0]}")
         
     except Exception as e:
         print(f"Error getting existing data: {e}")
-        # Create a new header row
+        # Create a new header row with our standard columns
         existing_values = [['Folder ID', 'Subfolder Name', 'Parent Folder', 'Last Modified', 'File Count', 
-                          'File Names', 'File Types', 'File IDs']]
+                          'File Names', 'File Types', 'File IDs', 'Upload Status', 'Upload Date', 'YouTube URL', 'YouTube Channel']]
     
-    # Prepare data rows for the new folders
-    new_rows = []
+    # Extract header row and existing data rows
+    header = existing_values[0] if existing_values else []
+    existing_data_rows = existing_values[1:] if len(existing_values) > 1 else []
     
-    # Add data for each subfolder
+    # Create a dictionary to store existing data by Folder ID for quick lookup
+    # This will help us update only what we need to while preserving other columns
+    existing_data_dict = {}
+    for row in existing_data_rows:
+        if row and len(row) > 0:  # Skip empty rows
+            folder_id = row[0]  # First column is Folder ID
+            existing_data_dict[folder_id] = row
+    
+    # Prepare the new/updated rows
+    updated_rows = []
+    updated_folder_ids = set()  # Keep track of folders we've updated
+    
+    # Process each folder in our new data
     for folder in folder_data:
+        folder_id = folder.get('id', '')
+        updated_folder_ids.add(folder_id)
+        
         # Format modified time
         modified_time = folder.get('modified_time', '')
         if modified_time:
@@ -310,47 +343,68 @@ def update_sheet_with_detailed_data(spreadsheet_id, folder_data):
             except:
                 pass
         
-        # Get file names and types as comma-separated lists
+        # Get file names, types, and IDs as comma-separated lists
         file_names = ", ".join([f['name'] for f in folder.get('files', [])])
         file_types = ", ".join([f['mimeType'] for f in folder.get('files', [])])
         file_ids = ", ".join([f['id'] for f in folder.get('files', [])])
         
-        # Add row for this subfolder
-        new_rows.append([
-            folder.get('id', ''),
+        # Prepare the basic data for this folder (columns A-H)
+        new_data = [
+            folder_id,
             folder.get('name', ''),
             folder.get('parent_folder', ''),
             modified_time,
             folder.get('file_count', 0),
             file_names,
             file_types,
-            file_ids
-        ])
+            file_ids,
+        ]
+        
+        # If this folder already exists in the sheet, preserve any additional columns (Upload Status, Date, URLs, etc.)
+        if folder_id in existing_data_dict:
+            existing_row = existing_data_dict[folder_id]
+            
+            # Add any extra columns from the existing row
+            # This preserves Upload Status, Upload Date, YouTube URLs, etc.
+            for i in range(len(new_data), len(existing_row)):
+                if i < len(existing_row):
+                    new_data.append(existing_row[i])
+                else:
+                    new_data.append('')  # Add empty cells if needed
+            
+            updated_rows.append(new_data)
+        else:
+            # This is a completely new folder, so we only have basic data
+            # Add empty values for any additional columns in the header
+            while len(new_data) < len(header):
+                new_data.append('')
+            updated_rows.append(new_data)
     
-    # Append new rows to existing data
-    all_values = existing_values + new_rows
+    # Add any existing rows that weren't in the new data (to preserve ALL existing data)
+    for folder_id, row in existing_data_dict.items():
+        if folder_id not in updated_folder_ids:
+            updated_rows.append(row)
     
-    # Update the spreadsheet with all data
+    # Sort rows by folder name for consistency (second column is Subfolder Name)
+    updated_rows.sort(key=lambda row: row[1] if len(row) > 1 else '')
+    
+    # Combine header and data for the final result
+    final_values = [header] + updated_rows
+    
+    # Update only specific columns (A-H) without clearing the entire sheet
     body = {
-        'values': all_values
+        'values': final_values
     }
     
-    # Clear the sheet first
-    sheets_service.spreadsheets().values().clear(
-        spreadsheetId=spreadsheet_id,
-        range='Sheet1!A:Z'
-    ).execute()
-    
-    # Then update with combined data
+    # Update the sheet WITHOUT clearing it first
     response = sheets_service.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
-        range='Sheet1!A1',
+        range='Sheet1!A1',  # Start from A1 and update as many cells as needed
         valueInputOption='RAW',
         body=body
     ).execute()
     
-    print(f"Spreadsheet updated with {len(new_rows)} new subfolders added.")
-    print(f"Total rows in spreadsheet now: {len(all_values)-1}")  # Subtract 1 for header
+    print(f"Spreadsheet updated preserving existing data. {len(updated_rows)} total subfolder entries.")
     print(f"URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
     return response
 
